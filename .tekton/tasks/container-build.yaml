@@ -1,0 +1,129 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/categories: Image Build
+    tekton.dev/displayName: Container
+    tekton.dev/pipelines.minVersion: 0.17.0
+    tekton.dev/platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/s390x
+    tekton.dev/tags: image-build
+  labels:
+    app.kubernetes.io/version: "0.7"
+  name: container-build
+spec:
+  description: |
+    Buildah task builds source into a container image and then pushes
+    it to a container registry.
+
+    Buildah Task builds source into a container image using Project Atomic's Buildah build tool.It uses Buildah's support for building from Dockerfiles, using its buildah bud command. This command executes the directives in the Dockerfile to assemble a container image, then pushes that image to a container registry.
+  params:
+    - description: Reference of the image buildah will produce.
+      name: image
+    - default: quay.io/buildah/stable:v1
+      description: The location of the buildah builder image.
+      name: builder_image
+    - default: overlay
+      description: Set buildah storage driver
+      name: storage_driver
+    - default: ./Containerfile
+      description: Path to the Dockerfile to build.
+      name: containerfile
+    - default: .
+      description: Path to the directory to use as context.
+      name: context
+    - default: "true"
+      description:
+        Verify the TLS on the registry endpoint (for push/pull to a non-TLS
+        registry)
+      name: tls_verify
+    - default: oci
+      description: The format of the built container, oci or docker
+      name: format
+    - default: ""
+      description: Extra parameters passed for the build command when building images.
+      name: build_extra_args
+    - description: The operating system that the image should be built for.
+      name: os
+    - description: The architecture that the image should be built for.
+      name: arch
+  steps:
+    - env:
+        - name: PARAM_IMAGE
+          value: $(params.image)
+        - name: PARAM_STORAGE_DRIVER
+          value: $(params.storage_driver)
+        - name: PARAM_CONTAINERFILE
+          value: $(params.containerfile)
+        - name: PARAM_CONTEXT
+          value: $(params.context)
+        - name: PARAM_TLS_VERIFY
+          value: $(params.tls_verify)
+        - name: PARAM_FORMAT
+          value: $(params.format)
+        - name: PARAM_BUILD_EXTRA_ARGS
+          value: $(params.build_extra_args)
+        - name: PARAM_OS
+          value: $(params.os)
+        - name: PARAM_ARCH
+          value: $(params.arch)
+        - name: WORKSPACE_ARTIFACTS_PATH
+          value: $(workspaces.artifacts.path)
+        - name: WORKSPACE_SSL_CERT_DIR_BOUND
+          value: $(workspaces.ssl-cert-dir.bound)
+        - name: WORKSPACE_SSL_CERT_DIR_PATH
+          value: $(workspaces.ssl-cert-dir.path)
+        - name: WORKSPACE_REGISTRY_CONFIG_PATH
+          value: $(workspaces.registry-config.path)
+      image: $(params.builder_image)
+      name: build
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        CERT_DIR_FLAG=""
+        [ ${WORKSPACE_SSL_CERT_DIR_BOUND} = "true" ] && CERT_DIR_FLAG="--cert-dir=${WORKSPACE_SSL_CERT_DIR_PATH}"
+
+        export REGISTRY_AUTH_FILE=${WORKSPACE_REGISTRY_CONFIG_PATH}/auth.json
+
+        buildah ${CERT_DIR_FLAG} --storage-driver=${PARAM_STORAGE_DRIVER} bud ${PARAM_BUILD_EXTRA_ARGS} \
+          --format=${PARAM_FORMAT} --tls-verify=${PARAM_TLS_VERIFY} \
+          -f ${PARAM_CONTAINERFILE} -t ${PARAM_IMAGE} ${PARAM_CONTEXT}
+
+        BASE_DIR=${WORKSPACE_ARTIFACTS_PATH}/containers/
+        mkdir -p ${BASE_DIR}
+        ARTIFACT=$(mktemp --suffix .archive -p ${BASE_DIR})
+        DESTINATION="oci-archive:${ARTIFACT}"
+
+        buildah ${CERT_DIR_FLAG} --storage-driver=${PARAM_STORAGE_DRIVER} push \
+          --digestfile /tmp/image-digest ${PARAM_IMAGE} ${DESTINATION}
+
+        SUFFIX=".spec"
+        echo "${PARAM_IMAGE}" > ${ARTIFACT}${SUFFIX}
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+  volumes:
+    - emptyDir: {}
+      name: varlibcontainers
+  workspaces:
+    - description: The source code has to be stored on the volume backing this workspace.
+      name: source
+      readOnly: true
+    - description: The built container images can be stored seperately on this workspace.
+      name: artifacts
+    - description: |
+        A workspace containing CA certificates, this will be used by
+        Buildah to verify the peer with when pulling or pushing over HTTPS.
+      name: ssl-cert-dir
+      optional: true
+    - description: |
+        An optional workspace that allows providing a auth.json
+        file for Buildah to access the container registry. The file should be
+        placed at the root of the workspace with name auth.json.
+      name: registry-config

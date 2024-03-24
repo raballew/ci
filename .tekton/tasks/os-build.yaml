@@ -1,0 +1,72 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/categories: Image Build
+    tekton.dev/displayName: OSBuild
+    tekton.dev/pipelines.minVersion: 0.17.0
+    tekton.dev/platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/s390x
+    tekton.dev/tags: image-build
+  labels:
+    app.kubernetes.io/version: "0.1"
+  name: os-build
+spec:
+  description: |
+    osbuild task builds source into building operating system artifacts
+    (usually called images) such as ISOs, RAW images, or virtual machines. It
+    involes the wrapper makefile around osbuild-mpp and osbuild to easily build
+    images.
+  params:
+    - default: .
+      description: Path to the directory where the build is invoked from.
+      name: context
+    - description: Reference of the container image that will be used to run the build.
+      name: builder_image
+    - default: ""
+      description: Extra parameters passed to the build command.
+      name: make_extra_args
+    - description: Name of target that should be built.
+      name: target
+    - description: The architecture that the image should be built for.
+      name: arch
+    - description: The specific image format that should be built.
+      name: format
+  steps:
+    - env:
+        - name: PARAM_CONTEXT
+          value: $(params.context)
+        - name: PARAM_MAKE_EXTRA_ARGS
+          value: $(params.make_extra_args)
+        - name: PARAM_TARGET
+          value: $(params.target)
+        - name: PARAM_ARCH
+          value: $(params.arch)
+        - name: PARAM_FORMAT
+          value: $(params.format)
+        - name: WORKSPACE_ARTIFACTS_PATH
+          value: $(workspaces.artifacts.path)
+      image: $(params.builder_image)
+      name: build
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        mkdir -p ${WORKSPACE_ARTIFACTS_PATH}/os/
+
+        HOST_ARCH=$(arch)
+        TAF=${PARAM_TARGET}.${HOST_ARCH}.${PARAM_FORMAT}
+        BUILDDIR=$(mktemp -d -p ${WORKSPACE_ARTIFACTS_PATH}/os/)
+        make -C ${PARAM_CONTEXT} ${TAF} BUILDDIR=${BUILDDIR} ${PARAM_MAKE_EXTRA_ARGS}
+      securityContext:
+        privileged: true
+        capabilities:
+          add:
+            - SETFCAP
+      workingDir: $(workspaces.source.path)
+  workspaces:
+    - description: The built OS images can be stored seperately on this workspace.
+      name: artifacts
+    - description: The source code has to be stored on the volume backing this workspace.
+      name: source
+      readOnly: true

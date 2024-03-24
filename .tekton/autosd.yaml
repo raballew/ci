@@ -1,0 +1,130 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[master]"
+  name: autosd
+spec:
+  params:
+    - name: repo_url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+    tasks:
+      - name: fetch-source
+        params:
+          - name: url
+            value: $(params.repo_url)
+          - name: revision
+            value: $(params.revision)
+        taskRef:
+          kind: Task
+          name: clone
+        workspaces:
+          - name: source
+            workspace: source
+      - matrix:
+          # podTemplate and matrix do not work together due to https://github.com/tektoncd/pipeline/issues/6742
+          include:
+            - name: image
+              params:
+                - name: context
+                  value: containers/kernel-dev/
+                - name: image
+                  value: quay.io/pwallrab/kernel-dev:$(params.revision)
+          params:
+            - name: os
+              value:
+                - linux
+            - name: arch
+              value:
+                - amd64
+                - arm64
+            - name: context
+              value:
+                - containers/kernel-dev/
+        name: container-build
+        runAfter:
+          - fetch-source
+        taskRef:
+          kind: Task
+          name: container-build
+        workspaces:
+          - name: source
+            workspace: source
+          - name: artifacts
+            workspace: artifacts
+          - name: registry-config
+            workspace: registry-config
+      - name: manifest-build
+        runAfter:
+          - container-build
+        taskRef:
+          kind: Task
+          name: manifest-build
+        workspaces:
+          - name: artifacts
+            workspace: artifacts
+          - name: registry-config
+            workspace: registry-config
+      - matrix:
+          # podTemplate and matrix do not work together due to https://github.com/tektoncd/pipeline/issues/6742
+          params:
+            - name: target
+              value:
+                - autosd-qemu-minimal-ostree
+            - name: arch
+              value:
+                - amd64
+                - arm64
+            - name: format
+              value:
+                - oci-archive+qcow2
+            - name: context
+              value:
+                - osbuild-manifests/
+            - name: builder_image
+              value:
+                - quay.io/pwallrab/kernel-dev:$(params.revision)
+        name: os-build
+        runAfter:
+          - manifest-build
+        taskRef:
+          kind: Task
+          name: os-build
+        workspaces:
+          - name: source
+            workspace: source
+          - name: artifacts
+            workspace: artifacts
+    workspaces:
+      - name: source
+      - name: artifacts
+      - name: registry-config
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 1Gi
+    - name: artifacts
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 10Gi
+    - name: registry-config
+      secret:
+        secretName: registry-config
