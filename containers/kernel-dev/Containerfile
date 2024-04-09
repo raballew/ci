@@ -21,6 +21,7 @@ RUN dnf install -y \
     osbuild-ostree \
     osbuild-tools \
     osbuild-auto \
+    pesign \
     # Dependencies to build the kernel's RPM \
     rpm-build \
     hostname \
