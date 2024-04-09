@@ -62,7 +62,7 @@ spec:
         privileged: true
         capabilities:
           add:
-            - SETFCAP
+            - ALL
       workingDir: $(workspaces.source.path)
   workspaces:
     - description: The built OS images can be stored seperately on this workspace.
