@@ -63,6 +63,11 @@ spec:
         capabilities:
           add:
             - ALL
+      resources:
+        requests:
+          devices.kubevirt.io/kvm: "1"
+        limits:
+          devices.kubevirt.io/kvm: "1"
       workingDir: $(workspaces.source.path)
   workspaces:
     - description: The built OS images can be stored seperately on this workspace.
